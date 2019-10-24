@@ -5,6 +5,7 @@ Defines various package-level constants and helper functions.
 
 import sys
 import os
+import shutil
 import argparse
 from pathlib import Path
 from typing import Union
@@ -29,6 +30,7 @@ HAIR_SPACE = "\u200a"
 ZERO_WIDTH_SPACE = "\ufeff"
 SHY_HYPHEN = "\u00ad"
 FUNCTION_APPLICATION = "\u2061"
+NO_BREAK_HYPHEN = "\u2011"
 IGNORED_FILENAMES = ["colophon.xhtml", "titlepage.xhtml", "imprint.xhtml", "uncopyright.xhtml", "halftitle.xhtml", "toc.xhtml", "loi.xhtml"]
 XHTML_NAMESPACES = {"xhtml": "http://www.w3.org/1999/xhtml", "epub": "http://www.idpf.org/2007/ops", "z3998": "http://www.daisy.org/z3998/2012/vocab/structure/", "se": "https://standardebooks.org/vocab/1.0", "dc": "http://purl.org/dc/elements/1.1/", "opf": "http://www.idpf.org/2007/opf", "container": "urn:oasis:names:tc:opendocument:xmlns:container", "m": "http://www.w3.org/1998/Math/MathML"}
 FRONTMATTER_FILENAMES = ["dedication.xhtml", "introduction.xhtml", "preface.xhtml", "foreword.xhtml", "preamble.xhtml", "titlepage.xhtml", "halftitlepage.xhtml", "imprint.xhtml"]
@@ -121,6 +123,10 @@ class RemoteCommandErrorException(SeException):
 class LintFailedException(SeException):
 	""" Lint failed """
 	code = 13
+
+class InvalidCssException(SeException):
+	""" Invalid CSS """
+	code = 14
 
 def natural_sort(list_to_sort: list) -> list:
 	"""
@@ -273,3 +279,37 @@ def get_target_filenames(targets: list, allowed_extensions: tuple, ignored_filen
 			target_xhtml_filenames.add(target)
 
 	return target_xhtml_filenames
+
+def get_xhtml_language(xhtml: str) -> str:
+	"""
+	Try to get the IETF lang tag for a complete XHTML document
+	"""
+
+	supported_languages = ["en-US", "en-GB", "en-AU", "en-CA"]
+
+	match = regex.search(r"<html[^>]+?xml:lang=\"([^\"]+)\"", xhtml)
+
+	if match:
+		language = match.group(1)
+	else:
+		language = None
+
+	if language not in supported_languages:
+		raise InvalidLanguageException("No valid xml:lang attribute in <html> root. Only {} are supported.".format(", ".join(supported_languages[:-1]) + ", and " + supported_languages[-1]))
+
+	return language
+
+def get_firefox_path() -> str:
+	"""
+	Get the path to the local Firefox binary
+	"""
+
+	try:
+		firefox_path = Path(shutil.which("firefox"))
+	except Exception:
+		# Look for default mac Firefox.app path if none found in path
+		firefox_path = Path("/Applications/Firefox.app/Contents/MacOS/firefox")
+		if not firefox_path.exists():
+			raise MissingDependencyException("Couldn’t locate firefox. Is it installed?")
+
+	return firefox_path

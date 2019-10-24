@@ -322,18 +322,10 @@ def _get_wikipedia_url(string: str, get_nacoaf_url: bool) -> (str, str):
 
 	return None, None
 
-def create_draft(args: list) -> int:
+def create_draft(args: list):
 	"""
 	Entry point for `se create-draft`
 	"""
-
-	if args.create_github_repo and not args.create_se_repo:
-		se.print_error("--create-github-repo option specified, but --create-se-repo option not specified.")
-		return se.InvalidInputException.code
-
-	if args.pg_url and not regex.match("^https?://www.gutenberg.org/ebooks/[0-9]+$", args.pg_url):
-		se.print_error("Project Gutenberg URL must look like: https://www.gutenberg.org/ebooks/<EBOOK-ID>")
-		return se.InvalidInputException.code
 
 	# Put together some variables for later use
 	identifier = se.formatting.make_url_safe(args.author) + "/" + se.formatting.make_url_safe(args.title)
@@ -352,8 +344,7 @@ def create_draft(args: list) -> int:
 	repo_name = Path(identifier.replace("/", "_"))
 
 	if repo_name.is_dir():
-		se.print_error("./{}/ already exists.".format(repo_name))
-		return se.InvalidInputException.code
+		raise se.InvalidInputException("./{}/ already exists.".format(repo_name))
 
 	# Download PG HTML and do some fixups
 	if args.pg_url:
@@ -364,19 +355,18 @@ def create_draft(args: list) -> int:
 			response = requests.get(args.pg_url)
 			pg_metadata_html = response.text
 		except Exception as ex:
-			se.print_error("Couldn’t download Project Gutenberg ebook metadata page. Error: {}".format(ex))
-			return se.RemoteCommandErrorException.code
+			raise se.RemoteCommandErrorException("Couldn’t download Project Gutenberg ebook metadata page. Error: {}".format(ex))
 
 		soup = BeautifulSoup(pg_metadata_html, "lxml")
 
 		# Get the ebook HTML URL from the metadata
 		pg_ebook_url = None
 		for element in soup.select("a[type^=\"text/html\"]"):
-			pg_ebook_url = regex.sub("^//", "https://", element["href"])
+			pg_ebook_url = regex.sub(r"^//", "https://", element["href"])
+			pg_ebook_url = regex.sub(r"^/", "https://www.gutenberg.org/", pg_ebook_url)
 
 		if not pg_ebook_url:
-			se.print_error("Could download ebook metadata, but couldn’t find URL for the ebook HTML.")
-			return se.RemoteCommandErrorException.code
+			raise se.RemoteCommandErrorException("Could download ebook metadata, but couldn’t find URL for the ebook HTML.")
 
 		# Get the ebook LCSH categories
 		pg_subjects = []
@@ -395,15 +385,13 @@ def create_draft(args: list) -> int:
 			response = requests.get(pg_ebook_url)
 			pg_ebook_html = response.text
 		except Exception as ex:
-			se.print_error("Couldn’t download Project Gutenberg ebook HTML. Error: {}".format(ex))
-			return se.RemoteCommandErrorException.code
+			raise se.RemoteCommandErrorException("Couldn’t download Project Gutenberg ebook HTML. Error: {}".format(ex))
 
 		try:
 			fixed_pg_ebook_html = fix_text(pg_ebook_html, uncurl_quotes=False)
 			pg_ebook_html = se.strip_bom(fixed_pg_ebook_html)
 		except Exception as ex:
-			se.print_error("Couldn’t determine text encoding of Project Gutenberg HTML file. Error: {}".format(ex))
-			return se.InvalidEncodingException.code
+			raise se.InvalidEncodingException("Couldn’t determine text encoding of Project Gutenberg HTML file. Error: {}".format(ex))
 
 		# Try to guess the ebook language
 		pg_language = "en-US"
@@ -419,35 +407,40 @@ def create_draft(args: list) -> int:
 
 	# Write PG data if we have it
 	if args.pg_url and pg_ebook_html:
-		soup = BeautifulSoup(pg_ebook_html, "html.parser")
+		try:
+			soup = BeautifulSoup(pg_ebook_html, "html.parser")
 
-		# Try to get the PG producers.  We only try this if there's a <pre> block with the header info (which is not always the case)
-		for element in soup(text=regex.compile(r"\*\*\*\s*Produced by.+$", flags=regex.DOTALL)):
-			if element.parent.name == "pre":
-				pg_producers = regex.sub(r".+?Produced by (.+?)\s*$", "\\1", element, flags=regex.DOTALL)
-				pg_producers = regex.sub(r"\(.+?\)", "", pg_producers, flags=regex.DOTALL)
-				pg_producers = regex.sub(r"(at )?https?://www\.pgdp\.net", "", pg_producers, flags=regex.DOTALL)
-				pg_producers = regex.sub(r"[\r\n]+", " ", pg_producers, flags=regex.DOTALL)
-				pg_producers = regex.sub(r",? and ", ", and ", pg_producers)
-				pg_producers = pg_producers.replace(" and the Online", " and The Online")
-				pg_producers = pg_producers.replace(", and ", ", ").strip().split(", ")
+			# Try to get the PG producers.  We only try this if there's a <pre> block with the header info (which is not always the case)
+			for element in soup(text=regex.compile(r"\*\*\*\s*Produced by.+$", flags=regex.DOTALL)):
+				if element.parent.name == "pre":
+					pg_producers = regex.sub(r".+?Produced by (.+?)\s*$", "\\1", element, flags=regex.DOTALL)
+					pg_producers = regex.sub(r"\(.+?\)", "", pg_producers, flags=regex.DOTALL)
+					pg_producers = regex.sub(r"(at )?https?://www\.pgdp\.net", "", pg_producers, flags=regex.DOTALL)
+					pg_producers = regex.sub(r"[\r\n]+", " ", pg_producers, flags=regex.DOTALL)
+					pg_producers = regex.sub(r",? and ", ", and ", pg_producers)
+					pg_producers = pg_producers.replace(" and the Online", " and The Online")
+					pg_producers = pg_producers.replace(", and ", ", ").strip().split(", ")
 
-		# Try to strip out the PG header
-		for element in soup(text=regex.compile(r"\*\*\*\s*START OF THIS")):
-			for sibling in element.parent.find_previous_siblings():
-				sibling.decompose()
+			# Try to strip out the PG header
+			for element in soup(text=regex.compile(r"\*\*\*\s*START OF THIS")):
+				for sibling in element.parent.find_previous_siblings():
+					sibling.decompose()
 
-			element.parent.decompose()
+				element.parent.decompose()
 
-		# Try to strip out the PG license footer
-		for element in soup(text=regex.compile(r"End of (the )?Project Gutenberg")):
-			for sibling in element.parent.find_next_siblings():
-				sibling.decompose()
+			# Try to strip out the PG license footer
+			for element in soup(text=regex.compile(r"End of (the )?Project Gutenberg")):
+				for sibling in element.parent.find_next_siblings():
+					sibling.decompose()
 
-			element.parent.decompose()
+				element.parent.decompose()
 
-		with open(repo_name / "src" / "epub" / "text" / "body.xhtml", "w", encoding="utf-8") as file:
-			file.write(str(soup))
+			with open(repo_name / "src" / "epub" / "text" / "body.xhtml", "w", encoding="utf-8") as file:
+				file.write(str(soup))
+		except IOError as ex:
+			raise se.InvalidFileException("Couldn’t write to ebook directory. Error: {}".format(ex))
+		except:
+			raise se.InvalidInputException("Couldn’t parse Project Gutenberg ebook source. This is usually due to invalid HTML in the ebook.")
 
 	# Copy over templates
 	shutil.copy(resource_filename("se", str(Path("data") / "templates" / "gitignore")), repo_name / ".gitignore")
@@ -609,8 +602,7 @@ def create_draft(args: list) -> int:
 						subject_xhtml = subject_xhtml + "\t\t<meta property=\"term\" refines=\"#subject-{}\">{}</meta>\n".format(i, loc_id)
 
 					except Exception as ex:
-						se.print_error("Couldn’t connect to id.loc.gov. Error: {}".format(ex))
-						return se.RemoteCommandErrorException.code
+						raise se.RemoteCommandErrorException("Couldn’t connect to id.loc.gov. Error: {}".format(ex))
 
 					i = i + 1
 
@@ -645,7 +637,4 @@ def create_draft(args: list) -> int:
 
 		return_code = call(["ssh", "standardebooks.org", "/standardebooks.org/scripts/init-se-repo --repo-name={} --title-string=\"{}\" {}".format(repo_name, title_string, github_option)])
 		if return_code != 0:
-			se.print_error("Failed to create repository on Standard Ebooks server: ssh returned code {}.".format(return_code))
-			return se.RemoteCommandErrorException.code
-
-	return 0
+			raise se.RemoteCommandErrorException("Failed to create repository on Standard Ebooks server: ssh returned code {}.".format(return_code))

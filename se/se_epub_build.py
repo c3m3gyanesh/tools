@@ -24,10 +24,10 @@ import se
 import se.formatting
 import se.easy_xml
 import se.epub
-import se.mobi
+from se.vendor.mobi import mobi
 import se.typography
 import se.images
-import se.kobo
+from se.vendor.kobo_touch_extended import kobo
 
 
 COVER_SVG_WIDTH = 1400
@@ -60,13 +60,13 @@ def build(self, metadata_xhtml: str, metadata_tree: se.easy_xml.EasyXmlTree, run
 			# Look for default Mac calibre app path if none found in path
 			ebook_convert_path = Path("/Applications/calibre.app/Contents/MacOS/ebook-convert")
 			if not ebook_convert_path.exists():
-				raise se.MissingDependencyException("Couldn’t locate epubcheck. Is it installed?")
+				raise se.MissingDependencyException("Couldn’t locate ebook-convert. Is Calibre installed?")
 
 	if run_epubcheck:
 		try:
-			epubcheck_path = Path(shutil.which("epubcheck"))
+			Path(shutil.which("java"))
 		except Exception:
-			raise se.MissingDependencyException("Couldn’t locate epubcheck. Is it installed?")
+			raise se.MissingDependencyException("Couldn’t locate java. Is it installed?")
 
 	navdoc2ncx_xsl_filename = resource_filename("se", str(Path("data") / "navdoc2ncx.xsl"))
 	mathml_xsl_filename = resource_filename("se", str(Path("data") / "mathmlcontent2presentation.xsl"))
@@ -256,6 +256,8 @@ def build(self, metadata_xhtml: str, metadata_tree: se.easy_xml.EasyXmlTree, run
 						except lxml.cssselect.ExpressionError:
 							# This gets thrown if we use pseudo-elements, which lxml doesn't support
 							pass
+						except lxml.cssselect.SelectorSyntaxError as ex:
+							raise se.InvalidCssException("Couldn't parse CSS in or near this line: {}\n{}".format(selector, ex))
 
 						# We've already replaced attribute/namespace selectors with classes in the CSS, now add those classes to the matching elements
 						if "[epub|type" in selector:
@@ -282,6 +284,8 @@ def build(self, metadata_xhtml: str, metadata_tree: se.easy_xml.EasyXmlTree, run
 						except lxml.cssselect.ExpressionError:
 							# This gets thrown if we use pseudo-elements, which lxml doesn't support
 							continue
+						except lxml.cssselect.SelectorSyntaxError as ex:
+							raise se.InvalidCssException("Couldn't parse CSS in or near this line: {}\n{}".format(selector, ex))
 
 						# Convert <abbr> to <span>
 						if "abbr" in selector:
@@ -349,6 +353,9 @@ def build(self, metadata_xhtml: str, metadata_tree: se.easy_xml.EasyXmlTree, run
 		metadata_xhtml = metadata_xhtml.replace("id=\"cover.jpg\" media-type=\"image/svg+xml\"", "id=\"cover.jpg\" media-type=\"image/jpeg\"")
 		metadata_xhtml = metadata_xhtml.replace("image/svg+xml", "image/png")
 		metadata_xhtml = regex.sub(r"properties=\"([^\"]*?)svg([^\"]*?)\"", "properties=\"\\1\\2\"", metadata_xhtml) # We may also have the `mathml` property
+
+		# Add an element noting the version of the se tools that built this ebook
+		metadata_xhtml = regex.sub(r"<dc:publisher", "<meta property=\"se:built-with\">{}</meta>\n\t\t<dc:publisher".format(se.VERSION), metadata_xhtml)
 
 		# Google Play Books chokes on https XML namespace identifiers (as of at least 2017-07)
 		metadata_xhtml = metadata_xhtml.replace("https://standardebooks.org/vocab/1.0", "http://standardebooks.org/vocab/1.0")
@@ -548,8 +555,8 @@ def build(self, metadata_xhtml: str, metadata_tree: se.easy_xml.EasyXmlTree, run
 					# Kobo .kepub files need each clause wrapped in a special <span> tag to enable highlighting.
 					# Do this here. Hopefully Kobo will get their act together soon and drop this requirement.
 					for filename in fnmatch.filter(filenames, "*.xhtml"):
-						se.kobo.paragraph_counter = 1
-						se.kobo.segment_counter = 1
+						kobo.paragraph_counter = 1
+						kobo.segment_counter = 1
 
 						# Don't add spans to the ToC
 						if filename == "toc.xhtml":
@@ -569,7 +576,7 @@ def build(self, metadata_xhtml: str, metadata_tree: se.easy_xml.EasyXmlTree, run
 							except Exception as ex:
 								raise se.InvalidXhtmlException("Error parsing XHTML file: {}\n{}".format(filename, ex), verbose)
 
-							se.kobo.add_kobo_spans_to_node(tree.xpath("./body", namespaces=se.XHTML_NAMESPACES)[0])
+							kobo.add_kobo_spans_to_node(tree.xpath("./body", namespaces=se.XHTML_NAMESPACES)[0])
 
 							xhtml = etree.tostring(tree, encoding="unicode", pretty_print=True, with_tail=False)
 							xhtml = regex.sub(r"<html:span", "<span", xhtml)
@@ -609,14 +616,6 @@ def build(self, metadata_xhtml: str, metadata_tree: se.easy_xml.EasyXmlTree, run
 		# Sort out MathML compatibility
 		has_mathml = "mathml" in metadata_xhtml
 		if has_mathml:
-			try:
-				firefox_path = Path(shutil.which("firefox"))
-			except Exception:
-				# Look for default mac Firefox.app path if none found in path
-				firefox_path = Path("/Applications/Firefox.app/Contents/MacOS/firefox")
-				if not firefox_path.exists():
-					raise se.MissingDependencyException("firefox is required to process MathML, but firefox couldn't be located. Is it installed?")
-
 			mathml_count = 1
 			for root, _, filenames in os.walk(work_epub_root_directory):
 				for filename in filenames:
@@ -748,18 +747,20 @@ def build(self, metadata_xhtml: str, metadata_tree: se.easy_xml.EasyXmlTree, run
 				print("\tRunning epubcheck on {} ...".format(epub_output_filename), end="", flush=True)
 
 			# Path arguments must be cast to string for Windows compatibility.
-			output = subprocess.run([str(epubcheck_path), "--quiet", str(output_directory / epub_output_filename)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout.decode().strip()
-
-			# epubcheck on Ubuntu 18.04 outputs some seemingly harmless warnings; flush them here.
-			if output:
-				output = regex.sub(r"\s*Warning at char 3 in xsl:param/@select on line.+", "", output)
-				output = regex.sub(r"\s*SXWN9000: The parent axis starting at a document node will never select anything", "", output)
+			output = subprocess.run(["java", "-jar", resource_filename("se", str(Path("data") / "epubcheck" / "epubcheck.jar")), "--quiet", str(output_directory / epub_output_filename)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout.decode().strip()
 
 			if output:
+				# Get the epubcheck version to print to the console
+				version_output = subprocess.run(["java", "-jar", resource_filename("se", str(Path("data") / "epubcheck" / "epubcheck.jar")), "--version"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout.decode().strip()
+				version = regex.search(r"[0-9]+\.([0-9]+\.?)*", version_output, flags=regex.MULTILINE).group(0)
+
+				# Remove trailing lines from epubcheck output
+				output = output.replace("\n\nCheck finished with errors", "")
+
 				if verbose:
-					print("\n\t\t" + "\t\t".join(output.splitlines(True)), file=sys.stderr)
+					print("\n\t\tepubcheck v{} failed with:\n\t\t".format(version) + "\t\t".join(output.splitlines(True)), file=sys.stderr)
 				else:
-					print(output, file=sys.stderr)
+					print("epubcheck v{} failed with:\n{}".format(version, output), file=sys.stderr)
 				return
 
 			if verbose:
@@ -768,6 +769,25 @@ def build(self, metadata_xhtml: str, metadata_tree: se.easy_xml.EasyXmlTree, run
 		if build_kindle:
 			if verbose:
 				print("\tBuilding {} ...".format(kindle_output_filename), end="", flush=True)
+
+			# There's a bug in Calibre <= 3.48.0 where authors who have more than one MARC relator role
+			# display as "unknown author" in the Kindle interface.
+			# See: https://bugs.launchpad.net/calibre/+bug/1844578
+			# Until the bug is fixed, we simply remove any other MARC relator on the dc:creator element.
+			# Once the bug is fixed, we can remove this block.
+			with open(work_epub_root_directory / "epub" / "content.opf", "r+", encoding="utf-8") as file:
+				xhtml = file.read()
+
+				processed_xhtml = xhtml
+
+				for match in regex.findall(r"<meta property=\"role\" refines=\"#author\" scheme=\"marc:relators\">.*?</meta>", xhtml):
+					if ">aut<" not in match:
+						processed_xhtml = processed_xhtml.replace(match, "")
+
+				if processed_xhtml != xhtml:
+					file.seek(0)
+					file.write(processed_xhtml)
+					file.truncate()
 
 			# Kindle doesn't go more than 2 levels deep for ToC, so flatten it here.
 			with open(work_epub_root_directory / "epub" / toc_filename, "r+", encoding="utf-8") as file:
@@ -904,7 +924,7 @@ def build(self, metadata_xhtml: str, metadata_tree: se.easy_xml.EasyXmlTree, run
 			se.epub.write_epub(work_epub_root_directory, work_directory / epub_output_filename)
 
 			# Generate the Kindle file
-			# We place it in the work directory because later we have to update the asin, and the se.mobi.update_asin() function will write to the final output directory
+			# We place it in the work directory because later we have to update the asin, and the mobi.update_asin() function will write to the final output directory
 			cover_path = work_epub_root_directory / "epub" / metadata_tree.xpath("//opf:item[@properties=\"cover-image\"]/@href")[0].replace(".svg", ".jpg")
 
 			# Path arguments must be cast to string for Windows compatibility.
@@ -916,7 +936,7 @@ def build(self, metadata_xhtml: str, metadata_tree: se.easy_xml.EasyXmlTree, run
 			# Success, extract the Kindle cover thumbnail
 
 			# Update the ASIN in the generated file
-			se.mobi.update_asin(asin, work_directory / kindle_output_filename, output_directory / kindle_output_filename)
+			mobi.update_asin(asin, work_directory / kindle_output_filename, output_directory / kindle_output_filename)
 
 			# Extract the thumbnail
 			# Path arguments must be cast to string for Windows compatibility.

@@ -73,7 +73,10 @@ def main() -> int:
 		args.command = "se_help"
 
 	# Now execute the command
-	return globals()[args.command.replace("-", "_")]()
+	try:
+	        return globals()[args.command.replace("-", "_")]()
+	except KeyboardInterrupt:
+		return 130 # Exit code for ctrl + c; seee http://www.tldp.org/LDP/abs/html/exitcodes.html
 
 def british2american() -> int:
 	"""
@@ -90,28 +93,32 @@ def british2american() -> int:
 		if args.verbose:
 			print("Processing {} ...".format(filename), end="", flush=True)
 
-		with open(filename, "r+", encoding="utf-8") as file:
-			xhtml = file.read()
-			new_xhtml = xhtml
+		try:
+			with open(filename, "r+", encoding="utf-8") as file:
+				xhtml = file.read()
+				new_xhtml = xhtml
 
-			convert = True
-			if not args.force:
-				if se.typography.guess_quoting_style(xhtml) == "american":
-					convert = False
-					if args.verbose:
-						print("")
-					se.print_warning("File appears to already use American quote style, ignoring. Use --force to convert anyway.{}".format(" File: " + str(filename) if not args.verbose else ""), args.verbose)
+				convert = True
+				if not args.force:
+					if se.typography.guess_quoting_style(xhtml) == "american":
+						convert = False
+						if args.verbose:
+							print("")
+						se.print_warning("File appears to already use American quote style, ignoring. Use --force to convert anyway.{}".format(" File: " + str(filename) if not args.verbose else ""), args.verbose)
 
-			if convert:
-				new_xhtml = se.typography.convert_british_to_american(xhtml)
+				if convert:
+					new_xhtml = se.typography.convert_british_to_american(xhtml)
 
-				if new_xhtml != xhtml:
-					file.seek(0)
-					file.write(new_xhtml)
-					file.truncate()
+					if new_xhtml != xhtml:
+						file.seek(0)
+						file.write(new_xhtml)
+						file.truncate()
 
-		if convert and args.verbose:
-			print(" OK")
+			if convert and args.verbose:
+				print(" OK")
+
+		except FileNotFoundError:
+			se.print_error("Not a file: {}".format(filename))
 
 	return 0
 
@@ -238,13 +245,10 @@ def compare_versions() -> int:
 
 	# Check for some required tools.
 	try:
-		firefox_path = Path(shutil.which("firefox"))
+		firefox_path = se.get_firefox_path()
 	except Exception:
-		# Look for default mac Firefox.app path if none found in path
-		firefox_path = Path("/Applications/Firefox.app/Contents/MacOS/firefox")
-		if not firefox_path.exists():
-			se.print_error("Couldn’t locate firefox. Is it installed?")
-			return se.MissingDependencyException.code
+		se.print_error("Couldn’t locate firefox. Is it installed?")
+		return se.MissingDependencyException.code
 
 	try:
 		compare_path = Path(shutil.which("compare"))
@@ -333,13 +337,13 @@ def create_draft() -> int:
 	from se.executables_create_draft import create_draft as se_create_draft
 
 	parser = argparse.ArgumentParser(description="Create a skeleton of a new Standard Ebook in the current directory.")
-	parser.add_argument("-a", "--author", dest="author", required=True, help="the author of the ebook")
-	parser.add_argument("-e", "--email", dest="email", help="use this email address as the main committer for the local Git repository")
-	parser.add_argument("-g", "--create-github-repo", dest="create_github_repo", action="store_true", help="initialize a new repository at the Standard Ebooks GitHub account; Standard Ebooks admin powers required; can only be used when --create-se-repo is specified")
 	parser.add_argument("-i", "--illustrator", dest="illustrator", help="the illustrator of the ebook")
-	parser.add_argument("-p", "--gutenberg-ebook-url", dest="pg_url", help="the URL of the Project Gutenberg ebook to download")
 	parser.add_argument("-r", "--translator", dest="translator", help="the translator of the ebook")
+	parser.add_argument("-p", "--gutenberg-ebook-url", dest="pg_url", help="the URL of the Project Gutenberg ebook to download")
+	parser.add_argument("-e", "--email", dest="email", help="use this email address as the main committer for the local Git repository")
 	parser.add_argument("-s", "--create-se-repo", dest="create_se_repo", action="store_true", help="initialize a new repository on the Standard Ebook server; Standard Ebooks admin powers required")
+	parser.add_argument("-g", "--create-github-repo", dest="create_github_repo", action="store_true", help="initialize a new repository at the Standard Ebooks GitHub account; Standard Ebooks admin powers required; can only be used when --create-se-repo is specified")
+	parser.add_argument("-a", "--author", dest="author", required=True, help="the author of the ebook")
 	parser.add_argument("-t", "--title", dest="title", required=True, help="the title of the ebook")
 	args = parser.parse_args()
 
@@ -351,7 +355,13 @@ def create_draft() -> int:
 		se.print_error("Project Gutenberg URL must look like: https://www.gutenberg.org/ebooks/<EBOOK-ID>")
 		return se.InvalidInputException.code
 
-	return se_create_draft(args)
+	try:
+		se_create_draft(args)
+	except se.SeException as ex:
+		se.print_error(ex)
+		return ex.code
+
+	return 0
 
 def dec2roman() -> int:
 	"""
@@ -420,7 +430,7 @@ def extract_ebook() -> int:
 			old_stdout = sys.stdout
 			sys.stdout = TextIOWrapper(BytesIO(), sys.stdout.encoding)
 
-			kindleunpack.unpackBook(target, extracted_path)
+			kindleunpack.unpackBook(str(target), str(extracted_path))
 
 			# Restore stdout
 			sys.stdout.close()
@@ -453,30 +463,38 @@ def find_mismatched_diacritics() -> int:
 	target_filenames = se.get_target_filenames(args.targets, (".xhtml"))
 
 	for filename in target_filenames:
-		with open(filename, "r", encoding="utf-8") as file:
-			xhtml = file.read()
+		try:
+			with open(filename, "r", encoding="utf-8") as file:
+				xhtml = file.read()
 
-			decomposed_xhtml = unicodedata.normalize("NFKD", xhtml)
+				decomposed_xhtml = unicodedata.normalize("NFKD", xhtml)
 
-			pattern = regex.compile(r"\b\w*\p{M}\w*\b")
-			for decomposed_word in pattern.findall(decomposed_xhtml):
-				word = unicodedata.normalize("NFKC", decomposed_word)
+				pattern = regex.compile(r"\b\w*\p{M}\w*\b")
+				for decomposed_word in pattern.findall(decomposed_xhtml):
+					word = unicodedata.normalize("NFKC", decomposed_word)
 
-				if len(word) > 2:
-					accented_words.add(word.lower())
+					if len(word) > 2:
+						accented_words.add(word.lower())
+
+		except FileNotFoundError:
+			se.print_error("Not a file: {}".format(filename))
 
 	# Now iterate over the list and search files for unaccented versions of the words
 	if accented_words:
 		for filename in target_filenames:
-			with open(filename, "r", encoding="utf-8") as file:
-				xhtml = file.read()
+			try:
+				with open(filename, "r", encoding="utf-8") as file:
+					xhtml = file.read()
 
-				for accented_word in accented_words:
-					plain_word = regex.sub(r"\p{M}", "", unicodedata.normalize("NFKD", accented_word))
+					for accented_word in accented_words:
+						plain_word = regex.sub(r"\p{M}", "", unicodedata.normalize("NFKD", accented_word))
 
-					pattern = regex.compile(r"\b" + plain_word + r"\b", regex.IGNORECASE)
-					if pattern.search(xhtml) is not None:
-						mismatches[accented_word] = plain_word
+						pattern = regex.compile(r"\b" + plain_word + r"\b", regex.IGNORECASE)
+						if pattern.search(xhtml) is not None:
+							mismatches[accented_word] = plain_word
+
+			except FileNotFoundError:
+				se.print_error("Not a file: {}".format(filename))
 
 	if mismatches:
 		for accented_word, plain_word in sorted(mismatches.items()):
@@ -567,11 +585,10 @@ def lint() -> int:
 	for directory in args.directories:
 		try:
 			se_epub = SeEpub(directory)
+			messages = se_epub.lint()
 		except se.SeException as ex:
 			se.print_error(ex)
 			return ex.code
-
-		messages = se_epub.lint()
 
 		table_data = []
 
@@ -662,6 +679,9 @@ def print_toc() -> int:
 		except se.SeException as ex:
 			se.print_error(ex)
 			return ex.code
+		except FileNotFoundError:
+			se.print_error("Couldn’t find toc.xhtml file.")
+			return se.InvalidSeEbookException
 
 	return 0
 
@@ -707,22 +727,30 @@ def modernize_spelling() -> int:
 		if args.verbose:
 			print("Processing {} ...".format(filename), end="", flush=True)
 
-		with open(filename, "r+", encoding="utf-8") as file:
-			xhtml = file.read()
+		try:
+			with open(filename, "r+", encoding="utf-8") as file:
+				xhtml = file.read()
 
-			try:
-				new_xhtml = se.spelling.modernize_spelling(xhtml)
-			except se.InvalidLanguageException as ex:
-				se.print_error("{}{}".format(ex, (" File: " + str(filename)) if not args.verbose else ""))
-				return ex.code
+				try:
+					new_xhtml = se.spelling.modernize_spelling(xhtml)
+					problem_spellings = se.spelling.detect_problem_spellings(xhtml)
 
-			if args.modernize_hyphenation:
-				new_xhtml = se.spelling.modernize_hyphenation(new_xhtml)
+					for problem_spelling in problem_spellings:
+						print("{}{}".format((filename.name) + ": " if not args.verbose else "", problem_spelling))
 
-			if new_xhtml != xhtml:
-				file.seek(0)
-				file.write(new_xhtml)
-				file.truncate()
+				except se.InvalidLanguageException as ex:
+					se.print_error("{}{}".format(ex, (" File: " + str(filename)) if not args.verbose else ""))
+					return ex.code
+
+				if args.modernize_hyphenation:
+					new_xhtml = se.spelling.modernize_hyphenation(new_xhtml)
+
+				if new_xhtml != xhtml:
+					file.seek(0)
+					file.write(new_xhtml)
+					file.truncate()
+		except FileNotFoundError:
+			se.print_error("Not a file: {}".format(filename))
 
 		if args.verbose:
 			print(" OK")
@@ -913,14 +941,17 @@ def semanticate() -> int:
 		if args.verbose:
 			print("Processing {} ...".format(filename), end="", flush=True)
 
-		with open(filename, "r+", encoding="utf-8") as file:
-			xhtml = file.read()
-			processed_xhtml = se.formatting.semanticate(xhtml)
+		try:
+			with open(filename, "r+", encoding="utf-8") as file:
+				xhtml = file.read()
+				processed_xhtml = se.formatting.semanticate(xhtml)
 
-			if processed_xhtml != xhtml:
-				file.seek(0)
-				file.write(processed_xhtml)
-				file.truncate()
+				if processed_xhtml != xhtml:
+					file.seek(0)
+					file.write(processed_xhtml)
+					file.truncate()
+		except FileNotFoundError:
+			se.print_error("Not a file: {}".format(filename))
 
 		if args.verbose:
 			print(" OK")
@@ -946,8 +977,12 @@ def split_file() -> int:
 	parser.add_argument("filename", metavar="FILE", help="an HTML/XHTML file")
 	args = parser.parse_args()
 
-	with open(args.filename, "r", encoding="utf-8") as file:
-		xhtml = se.strip_bom(file.read())
+	try:
+		with open(args.filename, "r", encoding="utf-8") as file:
+			xhtml = se.strip_bom(file.read())
+
+	except FileNotFoundError:
+		se.print_error("Not a file: {}".format(args.filename))
 
 	with open(resource_filename("se", str(Path("data") / "templates" / "header.xhtml")), "r", encoding="utf-8") as file:
 		header_xhtml = file.read()
@@ -1026,17 +1061,22 @@ def typogrify() -> int:
 		if args.verbose:
 			print("Processing {} ...".format(filename), end="", flush=True)
 
-		with open(filename, "r+", encoding="utf-8") as file:
-			xhtml = file.read()
-			processed_xhtml = se.typography.typogrify(xhtml, args.quotes)
+		try:
+			with open(filename, "r+", encoding="utf-8") as file:
+				xhtml = file.read()
+				processed_xhtml = se.typography.typogrify(xhtml, args.quotes)
 
-			if processed_xhtml != xhtml:
-				file.seek(0)
-				file.write(processed_xhtml)
-				file.truncate()
+				if processed_xhtml != xhtml:
+					file.seek(0)
+					file.write(processed_xhtml)
+					file.truncate()
 
-		if args.verbose:
-			print(" OK")
+			if args.verbose:
+				print(" OK")
+
+		except FileNotFoundError:
+			se.print_error("Not a file: {}".format(filename))
+			return se.InvalidFileException.code
 
 	return 0
 
@@ -1071,7 +1111,20 @@ def version() -> int:
 	Entry point for `se version`
 	"""
 
-	print(se.VERSION)
+	import pkg_resources
+
+	# Is distribution an editable install?
+	# Copied from a pip utility function which is not publicly accessible. See https://stackoverflow.com/questions/42582801/check-whether-a-python-package-has-been-installed-in-editable-egg-link-mode
+
+	distributions = {v.key: v for v in iter(pkg_resources.working_set)}
+
+	dist_is_editable = False
+	for path_item in sys.path:
+		egg_link = os.path.join(path_item, distributions['standardebooks'].project_name + '.egg-link')
+		if os.path.isfile(egg_link):
+			dist_is_editable = True
+
+	print("{}{}".format(se.VERSION, " (developer installation)" if dist_is_editable else ""))
 	return 0
 
 def word_count() -> int:
@@ -1095,12 +1148,16 @@ def word_count() -> int:
 		if args.exclude_se_files and filename.name == "endnotes.xhtml":
 			continue
 
-		with open(filename, "r", encoding="utf-8") as file:
-			try:
-				total_word_count += se.formatting.get_word_count(file.read())
-			except UnicodeDecodeError:
-				se.print_error("File is not UTF-8: {}".format(filename))
-				return se.InvalidEncodingException.code
+		try:
+			with open(filename, "r", encoding="utf-8") as file:
+				try:
+					total_word_count += se.formatting.get_word_count(file.read())
+				except UnicodeDecodeError:
+					se.print_error("File is not UTF-8: {}".format(filename))
+					return se.InvalidEncodingException.code
+
+		except FileNotFoundError:
+			se.print_error("Not a file: {}".format(filename))
 
 	if args.categorize:
 		category = "se:short-story"

@@ -143,6 +143,8 @@ def _get_unused_selectors(self) -> set:
 			# This gets thrown if we use pseudo-elements, which lxml doesn't support
 			unused_selectors.remove(selector)
 			continue
+		except lxml.cssselect.SelectorSyntaxError as ex:
+			raise se.InvalidCssException("Couldn't parse CSS in or near this line: {}\n{}".format(selector, ex))
 
 		for filename in filenames:
 			if not filename.endswith("titlepage.xhtml") and not filename.endswith("imprint.xhtml") and not filename.endswith("uncopyright.xhtml"):
@@ -154,8 +156,7 @@ def _get_unused_selectors(self) -> set:
 				try:
 					tree = etree.fromstring(str.encode(xhtml))
 				except Exception:
-					se.print_error("Couldn't parse XHTML in file: {}".format(filename))
-					exit(1)
+					raise se.InvalidXhtmlException("Couldn't parse XHTML in file: {}".format(filename))
 
 				if tree.xpath(sel.path, namespaces=se.XHTML_NAMESPACES):
 					unused_selectors.remove(selector)
@@ -386,6 +387,13 @@ def lint(self, metadata_xhtml) -> list:
 					if "<title>Half Title</title>" not in file_contents:
 						messages.append(LintMessage("Half title <title> tag must contain exactly: \"Half Title\".", se.MESSAGE_TYPE_ERROR, filename))
 
+				if filename == "colophon.xhtml":
+					if "<a href=\"{}\">{}</a>".format(self.generated_identifier.replace("url:", ""), self.generated_identifier.replace("url:https://", "")) not in file_contents:
+						messages.append(LintMessage("Unexpected SE identifier in colophon. Expected: {}".format(self.generated_identifier), se.MESSAGE_TYPE_ERROR, filename))
+
+					if ">trl<" in metadata_xhtml and "translated from" not in file_contents:
+						messages.append(LintMessage("Translator detected in metadata, but no 'translated from LANG' block in colophon", se.MESSAGE_TYPE_ERROR, filename))
+
 				if filename == "titlepage.xhtml":
 					if "<title>Titlepage</title>" not in file_contents:
 						messages.append(LintMessage("Titlepage <title> tag must contain exactly: \"Titlepage\".", se.MESSAGE_TYPE_ERROR, filename))
@@ -524,6 +532,12 @@ def lint(self, metadata_xhtml) -> list:
 						messages.append(LintMessage("CSS properties must be indented with exactly one tab.", se.MESSAGE_TYPE_ERROR, filename))
 						for match in matches:
 							messages.append(LintMessage(match, se.MESSAGE_TYPE_ERROR, filename, True))
+
+					# If we select on the xml namespace, make sure we define the namespace in the CSS, otherwise the selector won't work
+					matches = regex.findall(r"\[\s*xml\s*\|", file_contents)
+					if matches and "@namespace xml \"http://www.w3.org/XML/1998/namespace\";" not in file_contents:
+						messages.append(LintMessage("[xml|attr] selector in CSS, but no XML namespace declared (@namespace xml \"http://www.w3.org/XML/1998/namespace\";).", se.MESSAGE_TYPE_ERROR, filename))
+
 
 				if filename.endswith(".xhtml"):
 					for message in _get_malformed_urls(file_contents):
@@ -1040,10 +1054,18 @@ def lint(self, metadata_xhtml) -> list:
 							loi_text = illustration.get_text()
 
 							with open(self.path / "src" / "epub" / "text" / chapter_ref, "r", encoding="utf-8") as chapter:
-								figure = BeautifulSoup(chapter, "lxml").select("#" + figure_ref)[0]
+								try:
+									figure = BeautifulSoup(chapter, "lxml").select("#" + figure_ref)[0]
+								except Exception:
+									messages.append(LintMessage("#{} not found in file {}".format(figure_ref, chapter_ref), se.MESSAGE_TYPE_ERROR, 'loi.xhtml'))
+									continue
+
+								if figure.img:
+									figure_img_alt = figure.img.get('alt')
+
 								if figure.figcaption:
 									figcaption_text = figure.figcaption.get_text()
-							if figcaption_text != "" and loi_text != "" and figcaption_text != loi_text:
+							if (figcaption_text != "" and loi_text != "" and figcaption_text != loi_text) and (figure_img_alt != "" and loi_text != "" and figure_img_alt != loi_text):
 								messages.append(LintMessage("The <figcaption> tag of {} doesn’t match the text in its LoI entry".format(figure_ref), se.MESSAGE_TYPE_WARNING, chapter_ref))
 
 				# Check for missing MARC relators
@@ -1061,9 +1083,6 @@ def lint(self, metadata_xhtml) -> list:
 
 				if filename == "loi.xhtml" and ">ill<" not in metadata_xhtml:
 					messages.append(LintMessage("loi.xhtml found, but no MARC relator 'ill' (Illustrator)", se.MESSAGE_TYPE_WARNING, filename))
-
-				if filename == "colophon.xhtml" and "<a href=\"{}\">{}</a>".format(self.generated_identifier.replace("url:", ""), self.generated_identifier.replace("url:https://", "")) not in file_contents:
-					messages.append(LintMessage("Unexpected SE identifier in colophon. Expected: {}".format(self.generated_identifier), se.MESSAGE_TYPE_ERROR, filename))
 
 				# Check for wrong semantics in frontmatter/backmatter
 				if filename in se.FRONTMATTER_FILENAMES and "frontmatter" not in file_contents:

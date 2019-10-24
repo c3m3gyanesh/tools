@@ -18,7 +18,7 @@ def modernize_hyphenation(xhtml: str) -> str:
 	INPUTS
 	xhtml: A string of XHTML to modernize
 
-	OUTPUTS:
+	OUTPUTS
 	A string representing the XHTML with its hyphenation modernized
 	"""
 
@@ -48,6 +48,34 @@ def modernize_hyphenation(xhtml: str) -> str:
 
 	return xhtml
 
+def detect_problem_spellings(xhtml: str) -> list:
+	"""
+	Return a list of potential problem spellings, that cannot be scripted due to a
+	word having various meanings.
+
+	For example, "staid" can be an archaic spelling of "stayed",
+	or as an adjective it could mean "marked by settled sedateness
+	and often prim self-restraint".
+
+	INPUTS
+	xhtml: A string of XHTML to inspect
+
+	OUTPUTS
+	A list of strings representing potential words to manually inspect
+	"""
+
+	# Uncomment if we eventually need the document language
+	# language = se.get_xhtml_language(xhtml)
+	output = []
+
+	if regex.search(r"\bstaid\b", xhtml):
+		output.append("“staid” detected: should be modernized if it is the past tense of “stay,” but not if used as an adjective meaning “sedate or prim.”")
+
+	if regex.search(r"\cozen\b", xhtml):
+		output.append("“cozen” detected: should be modernized if it means “cousin,” but not if used to mean “to deceive or win over.”")
+
+	return output
+
 def modernize_spelling(xhtml: str) -> str:
 	"""
 	Convert old-timey spelling on a case-by-case basis.
@@ -55,20 +83,11 @@ def modernize_spelling(xhtml: str) -> str:
 	INPUTS
 	xhtml: A string of XHTML to modernize
 
-	OUTPUTS:
+	OUTPUTS
 	A string representing the XHTML with its spelling modernized
 	"""
 
-	# What language are we using?
-	supported = ["en-US", "en-GB", "en-AU", "en-CA"]
-	match = regex.search(r"<html[^>]+?xml:lang=\"([^\"]+)\"", xhtml)
-	if match:
-		language = match.group(1)
-	else:
-		language = None
-	if not language in supported:
-		language_list = ", ".join(supported[:-1]) + ", and " + supported[-1]
-		raise se.InvalidLanguageException("No valid xml:lang attribute in <html> root. Only {} are supported.".format(language_list))
+	language = se.get_xhtml_language(xhtml)
 
 	# ADDING NEW WORDS TO THIS LIST:
 	# A good way to check if a word is "archaic" is to do a Google N-Gram search: https://books.google.com/ngrams/graph?case_insensitive=on&year_start=1800&year_end=2000&smoothing=3
@@ -167,7 +186,7 @@ def modernize_spelling(xhtml: str) -> str:
 	xhtml = regex.sub(r"\b([Dd])ulness", r"\1ullness", xhtml)			# dulness -> dullness
 	xhtml = regex.sub(r"\b([Ff])iord", r"\1jord", xhtml)				# fiord -> fjord
 	xhtml = regex.sub(r"\b([Ff])ulness\b", r"\1ullness", xhtml)			# fulness -> fullness (but not for ex. thoughtfulness)
-	xhtml = regex.sub(r"\b’([Pp])hone", r"\1hone", xhtml)				# ’phone -> phone
+	xhtml = regex.sub(r"['’]([Pp])hone", r"\1hone", xhtml)				# ’phone -> phone; note that we can't use \b on the left because it won't match for some reason
 	xhtml = regex.sub(r"\b([Ss])hew", r"\1how", xhtml)				# shew -> show
 	xhtml = regex.sub(r"\b([Tt])rowsers", r"\1rousers", xhtml)			# trowsers -> trousers
 	xhtml = regex.sub(r"\b([Bb])iass", r"\1ias", xhtml)				# biass -> bias
@@ -218,7 +237,10 @@ def modernize_spelling(xhtml: str) -> str:
 	xhtml = regex.sub(r"Moliere", r"Molière", xhtml)				# Moliere -> Molière
 	xhtml = regex.sub(r"Tolstoi", r"Tolstoy", xhtml)				# Tolstoi -> Tolstoy
 	xhtml = regex.sub(r"Buonaparte", r"Bonaparte", xhtml)				# Buonaparte -> Bonaparte
-	xhtml = regex.sub(r"Shake?spear([^ie])", r"Shakespeare\1", xhtml)		# Shakespear/Shakspear -> Shakespeare
+	xhtml = regex.sub(r"Shake?spea?r([^ie])", r"Shakespeare\1", xhtml)		# Shakespear/Shakspeare -> Shakespeare
+	xhtml = regex.sub(r"Shake?spea?re", r"Shakespeare", xhtml)			# Shakespear/Shakspeare -> Shakespeare
+	xhtml = regex.sub(r"Shakspea?rean", r"Shakespearean", xhtml)			# Shaksperean -> Shakespearean
+	xhtml = regex.sub(r"Shakspea?re?’s", r"Shakespeare’s", xhtml)			# Shakspere’s -> Shakespeare’s
 	xhtml = regex.sub(r"Raffaelle", r"Raphael", xhtml)				# Raffaelle -> Raphael
 	xhtml = regex.sub(r"Michael Angelo", r"Michaelangelo", xhtml)			# Michael Angelo -> Michaelangelo
 	xhtml = regex.sub(r"\bVergil", r"Virgil", xhtml)				# Vergil -> Virgil
@@ -231,6 +253,7 @@ def modernize_spelling(xhtml: str) -> str:
 	xhtml = regex.sub(r"\b([Rr])enascence", r"\1enaissance", xhtml)			# renascence -> renaissance
 	xhtml = regex.sub(r"\bThibet", r"Tibet", xhtml)					# Thibet -> Tibet
 	xhtml = regex.sub(r"\bTimbuctoo", r"Timbuktu", xhtml)				# Timbuctoo -> Timbuktu
+	xhtml = regex.sub(r"\bRumania", r"Romania", xhtml)				# Rumania -> Romania
 
 	# Remove archaic diphthongs
 	xhtml = regex.sub(r"\b([Mm])edi(æ|ae)val", r"\1edieval", xhtml)

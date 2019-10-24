@@ -2,49 +2,39 @@
 
 A collection of tools Standard Ebooks uses to produce its ebooks, including basic setup of ebooks, text processing, and build tools.
 
-Installing this toolset using `pip` makes the `se` command line executable available. Its various commands are described below, or you can use `se help` to list them.
+Installing this toolset using `pipx` makes the `se` command line executable available. Its various commands are described below, or you can use `se help` to list them.
 
 # Installation
 
 The toolset requires Python >= 3.5.
 
+To install the toolset locally for development and debugging, see [Installation for Developers](#installation-for-developers).
+
 ## Ubuntu 18.04 (Bionic) users
 
 ```shell
 # Install some pre-flight dependencies.
-sudo apt install -y python3-pip libxml2-utils librsvg2-bin libimage-exiftool-perl imagemagick jarwrapper default-jre inkscape calibre curl git
+sudo apt install -y python3-pip python3-venv libxml2-utils librsvg2-bin libimage-exiftool-perl imagemagick default-jre inkscape calibre git
+
+# Install pipx.
+python3 -m pip install --user pipx
+python3 -m pipx ensurepath
+
+# Install the toolset.
+pipx install standardebooks
 
 # Install required fonts.
-mkdir -p ~/.local/share/fonts/
-curl -s -o ~/.local/share/fonts/LeagueSpartan-Bold.otf "https://raw.githubusercontent.com/theleagueof/league-spartan/master/LeagueSpartan-Bold.otf"
-curl -s -o ~/.local/share/fonts/OFLGoudyStM.otf "https://raw.githubusercontent.com/theleagueof/sorts-mill-goudy/master/OFLGoudyStM.otf"
-curl -s -o ~/.local/share/fonts/OFLGoudyStM-Italic.otf "https://raw.githubusercontent.com/theleagueof/sorts-mill-goudy/master/OFLGoudyStM-Italic.otf"
+mkdir -p $HOME/.local/share/fonts/
+cp $HOME/.local/pipx/venvs/standardebooks/lib/python3.*/site-packages/se/data/fonts/*/*.otf $HOME/.local/share/fonts/
 
 # Refresh the local font cache.
 sudo fc-cache -f
 
-# Download and install the required version of epubcheck.
-wget --quiet -O /tmp/epubcheck.zip $(wget --quiet -O - https://api.github.com/repos/w3c/epubcheck/releases/latest | grep -E --only-matching "\"browser_download_url\":\s*\"(.*?)\"" | sed "s/\"browser_download_url\":\s*//g" | sed "s/\"//g")
-unzip -d $HOME/.local/share/ /tmp/epubcheck.zip
-mv $HOME/.local/share/epubcheck-* $HOME/.local/share/epubcheck
-sudo chmod +x $HOME/.local/share/epubcheck/epubcheck.jar
-sudo ln -s $HOME/.local/share/epubcheck/epubcheck.jar /usr/local/bin/epubcheck
-
-# Install the toolset.
-pip3 install standardebooks
-
-# Either link the `se` executable to a place that's in your path...
-sudo ln -s $HOME/.local/bin/se /usr/local/bin/se
-
-# ...or, add pip's binary location (~/.local/bin) to your $PATH to be able to access the `se` command.
-# To make this permanent, add ~/.local/bin to your $PATH in ~/.bashrc or ~/.zshrc
-export PATH=$PATH:~/.local/bin
-
 # Optional: ZSH users can install tab completion.
-sudo ln -s $HOME/.local/lib/python3.*/site-packages/se/completions/zsh/_se /usr/share/zsh/vendor-completions/_se && hash -rf && compinit
+sudo ln -s $HOME/.local/pipx/venvs/standardebooks/lib/python3.*/site-packages/se/completions/zsh/_se /usr/share/zsh/vendor-completions/_se && hash -rf && compinit
 
 # Optional: Bash users can install tab completion.
-sudo ln -s $HOME/.local/lib/python3.*/site-packages/se/completions/bash/se /usr/share/bash-completions/completions/se
+sudo ln -s $HOME/.local/pipx/venvs/standardebooks/lib/python3.*/site-packages/se/completions/bash/se /usr/share/bash-completion/completions/se
 ```
 
 ## Fedora users
@@ -53,25 +43,22 @@ sudo ln -s $HOME/.local/lib/python3.*/site-packages/se/completions/bash/se /usr/
 # Install some pre-flight dependencies.
 sudo dnf install firefox ImageMagick calibre librsvg2-tools vim inkscape libxml2 perl-Image-ExifTool java-1.8.0-openjdk
 
+# Install pipx.
+python3 -m pip install --user pipx
+python3 -m pipx ensurepath
+
+# Install the toolset.
+pipx install standardebooks
+
 # Install required fonts.
-mkdir -p ~/.local/share/fonts/
-curl -s -o ~/.local/share/fonts/LeagueSpartan-Bold.otf "https://raw.githubusercontent.com/theleagueof/league-spartan/master/LeagueSpartan-Bold.otf"
-curl -s -o ~/.local/share/fonts/OFLGoudyStM.otf "https://raw.githubusercontent.com/theleagueof/sorts-mill-goudy/master/OFLGoudyStM.otf"
-curl -s -o ~/.local/share/fonts/OFLGoudyStM-Italic.otf "https://raw.githubusercontent.com/theleagueof/sorts-mill-goudy/master/OFLGoudyStM-Italic.otf"
+mkdir -p $HOME/.local/share/fonts/
+cp $HOME/.local/pipx/venvs/standardebooks/lib/python3.*/site-packages/se/data/fonts/*/*.otf $HOME/.local/share/fonts/
 
-# Refresh the local font cache.
-sudo fc-cache -f
+# Optional: ZSH users can install tab completion.
+sudo ln -s $HOME/.local/pipx/venvs/standardebooks/lib/python3.*/site-packages/se/completions/zsh/_se /usr/share/zsh/vendor-completions/_se && hash -rf && compinit
 
-# Download and install the required version of epubcheck.
-wget --quiet -O /tmp/epubcheck.zip $(wget --quiet -O - https://api.github.com/repos/w3c/epubcheck/releases/latest | grep -E --only-matching "\"browser_download_url\":\s*\"(.*?)\"" | sed "s/\"browser_download_url\":\s*//g" | sed "s/\"//g")
-unzip -d $HOME/.local/share/ /tmp/epubcheck.zip
-mv $HOME/.local/share/epubcheck-* $HOME/.local/share/epubcheck
-sudo chmod +x $HOME/.local/share/epubcheck/epubcheck.jar
-
-# Set up a wrapper script to call the epubcheck jar file.
-# Ubuntu uses `jarwrapper` to let you execute a jar file directly on the command line. Fedora does not have this capability without extra configuration.
-echo -e "#\!/usr/bin/env bash\n/usr/bin/java -jar \"\$HOME/.local/share/epubcheck/epubcheck.jar\" \"\$@\"" | sudo tee /usr/local/bin/epubcheck
-sudo chmod +x /usr/local/bin/epubcheck
+# Optional: Bash users can install tab completion.
+sudo ln -s $HOME/.local/pipx/venvs/standardebooks/lib/python3.*/site-packages/se/completions/bash/se /usr/share/bash-completion/completions/se
 ```
 
 ## macOS users
@@ -88,29 +75,55 @@ These instructions were tested on macOS 10.12 and 10.13. Your mileage may vary. 
 
 	```shell
 	# Install some pre-flight dependencies.
-	brew install python epubcheck imagemagick libmagic librsvg exiftool git
+	brew install python imagemagick libmagic librsvg exiftool git
 	pip3 install pyopenssl
+
+	# Install pipx.
+	python3 -m pip install pipx
+	python3 -m pipx ensurepath
 
 	# Install required applications.
 	brew cask install java calibre xquartz inkscape
 
-	# Install required fonts.
-	curl -s -o ~/Library/Fonts/LeagueSpartan-Bold.otf "https://raw.githubusercontent.com/theleagueof/league-spartan/master/LeagueSpartan-Bold.otf"
-	curl -s -o ~/Library/Fonts/OFLGoudyStM.otf "https://raw.githubusercontent.com/theleagueof/sorts-mill-goudy/master/OFLGoudyStM.otf"
-	curl -s -o ~/Library/Fonts/OFLGoudyStM-Italic.otf "https://raw.githubusercontent.com/theleagueof/sorts-mill-goudy/master/OFLGoudyStM-Italic.otf"
-
 	# Install the toolset.
-	pip3 install standardebooks
+	pipx install standardebooks
+
+	# Install required fonts.
+	cp $HOME/.local/pipx/venvs/standardebooks/lib/python3.*/site-packages/se/data/fonts/*/*.otf ~/Library/Fonts/
 	```
 
-## Installing from Git
+## Installation for developers
 
-To install the latest version from Git instead of the version from Pip, follow the instructions above to install dependencies, but instead of running `pip3 install` run the following:
+If you want to work on the toolset source, it’s helpful to tell `pipx` to install the package in “editable” mode. This will allow you to edit the source of the package live and see changes immediately, without having to uninstall and re-install the package.
+
+To do that, follow the general installation instructions above; but instead of doing `pipx install standardebooks`, do the following:
 
 ```shell
-cd /PATH/TO/TOOLS/REPO
-python3 setup.py bdist_wheel
-pip3 install dist/*.whl
+git clone https://github.com/standardebooks/tools.git
+pipx install --editable --spec tools standardebooks
+
+# Optional: ZSH users can install tab completion.
+sudo ln -s $(readlink -f .)/tools/se/completions/zsh/_se /usr/share/zsh/vendor-completions/_se && hash -rf && compinit
+
+# Optional: Bash users can install tab completion.
+sudo ln -s $(readlink -f .)/tools/se/completions/bash/se /usr/share/bash-completion/completions/se
+```
+
+Now the `se` binary is in your path, and any edits you make to source files in the `tools/` directory are immediately reflected when executing the binary.
+
+### Linting with `pylint`
+
+Before we can use `pylint` on the toolset source, we have to inject `pylint` into the venv `pipx` created for the `standardebooks` package:
+
+```shell
+pipx inject standardebooks pylint
+```
+
+Then make sure to call the `pylint` binary that `pipx` installed in the `standardebooks` venv, *not* any other globally-installed `pylint` binary:
+
+```shell
+cd /path/to/tools/repo
+$HOME/.local/pipx/venvs/standardebooks/bin/pylint se
 ```
 
 # Help wanted
@@ -118,8 +131,6 @@ pip3 install dist/*.whl
 We need volunteers to take the lead on the following goals:
 
 - Writing installation instructions for Bash and ZSH completions for MacOS.
-
-- Possibly adding virtualenv to the installation instructions.
 
 # Tool descriptions
 
